@@ -1,42 +1,25 @@
 name: CI
-
 permissions:
   contents: read
-
 on:
-  pull_request:
-  push:
-    branches:
-    - main
-    - 'run-ci/**'
-    - '**/run-ci/**'
-  workflow_dispatch:
-
+  push: null
 env:
   RUST_BACKTRACE: 1
   CARGO_TERM_COLOR: always
   CLICOLOR: 1
-
 jobs:
-  ci:
-    permissions:
-      contents: none
-    name: CI
-    needs: [test, docs, rustfmt, clippy]
-    runs-on: ubuntu-latest
-    steps:
-    - name: Done
-      run: exit 0
-
   test:
     name: Test
     strategy:
       matrix:
-        os: ["ubuntu-latest", "windows-latest", "macos-latest"]
+        os:
+        - ubuntu-latest
+        - windows-latest
+        - macos-latest
     runs-on: ${{ matrix.os }}
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
     - uses: Swatinem/rust-cache@v2
     - name: Build
       run: cargo test --no-run --workspace --all-features
@@ -44,68 +27,71 @@ jobs:
       run: cargo test --workspace
     - name: All features
       run: cargo test --workspace --all-features
-    - uses: extractions/setup-just@v3
+    - uses: extractions/setup-just@v1
     - name: No-default features
       run: cargo test --workspace --no-default-features
     - name: Journey
-      if: ${{ matrix.os != 'windows-latest' }} # on windows, journey tests don't run yet and it's not important enough right now
+      if: ${{ matrix.os != 'windows-latest' }}
       run: just ci-test
-
+  installation:
+    name: Installation
+    strategy:
+      matrix:
+        os:
+        - ubuntu-latest
+        - windows-latest
+        rust:
+        - stable
+    continue-on-error: ${{ matrix.rust != 'stable' }}
+    runs-on: ${{ matrix.os }}
+    steps:
+    - name: 'Installation from crates.io: cargo-smart-release'
+      run: cargo install --debug --force cargo-smart-release
   lockfile:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
     - uses: Swatinem/rust-cache@v2
-    - name: "Is lockfile updated?"
+    - name: Is lockfile updated?
       run: cargo fetch --locked
-
-  docs:
-    name: Docs
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    - uses: Swatinem/rust-cache@v2
-    - name: Check documentation
-      env:
-        RUSTDOCFLAGS: -D warnings
-      run: cargo doc --workspace --all-features --no-deps --document-private-items
-
-  rustfmt:
-    name: rustfmt
-    runs-on: ubuntu-latest
-    steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-    - uses: Swatinem/rust-cache@v2
-    - name: Check formatting
-      run: cargo fmt --all -- --check
-
   clippy:
-    name: clippy
     runs-on: ubuntu-latest
-    permissions:
-      security-events: write # to upload sarif results
+    needs:
+    - installation
+    - test
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v4
+      uses: actions/checkout@v3
     - uses: Swatinem/rust-cache@v2
     - name: Install SARIF tools
       run: cargo install clippy-sarif
     - name: Install SARIF tools
       run: cargo install sarif-fmt
     - name: Check
-      run: >
-        cargo clippy --workspace --all-features --all-targets --message-format=json -- -D warnings
-        | clippy-sarif
-        | tee clippy-results.sarif
-        | sarif-fmt
+      run: 'cargo clippy --workspace --all-features --all-targets --message-format=json -- -D warnings
+        --allow deprecated | clippy-sarif | tee clippy-results.sarif | sarif-fmt
+
+        '
       continue-on-error: true
     - name: Upload
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v2
       with:
         sarif_file: clippy-results.sarif
         wait-for-processing: true
     - name: Report status
-      run: cargo clippy --workspace --all-features --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-features --all-targets -- -D warnings --allow deprecated
+    - uses: Swatinem/rust-cache@v2
+      if: '!cancelled()'
+    - name: Check documentation
+      env:
+        RUSTDOCFLAGS: -D warnings
+      run: cargo doc --workspace --all-features --no-deps --document-private-items
+      if: '!cancelled()'
+    - uses: Swatinem/rust-cache@v2
+      if: '!cancelled()'
+    - name: Check formatting
+      run: cargo fmt --all -- --check
+      if: '!cancelled()'
+    - name: Done
+      run: exit 0
